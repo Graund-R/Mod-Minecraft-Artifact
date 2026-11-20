@@ -1,0 +1,84 @@
+name: Build mod
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '8'
+
+      - name: Read version (version.txt is the single source of truth)
+        run: |
+          set -e
+          VER=$(tr -d '[:space:]' < version.txt)
+          if ! echo "$VER" | grep -Eq '^[0-9]+(\.[0-9]+)*$'; then
+            echo "version.txt must look like 1.0, got: '$VER'"; exit 1
+          fi
+          if [[ "$GITHUB_REF" == refs/tags/v* ]] && [ "${GITHUB_REF_NAME#v}" != "$VER" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match version.txt ($VER)"; exit 1
+          fi
+          echo "MODVER=$VER" >> "$GITHUB_ENV"
+
+      - name: Cache Gradle and Forge downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            mdk.zip
+          key: forge-1.12.2-14.23.5.2860-${{ runner.os }}
+          restore-keys: forge-1.12.2-
+
+      - name: Prepare project (Forge MDK + ./src)
+        run: |
+          set -e
+          test -d src/main/java/weaponmod
+          if [ ! -f mdk.zip ]; then
+            curl -fL -o mdk.zip https://maven.minecraftforge.net/net/minecraftforge/forge/1.12.2-14.23.5.2860/forge-1.12.2-14.23.5.2860-mdk.zip
+          fi
+          rm -rf mdk
+          mkdir mdk
+          unzip -q mdk.zip -d mdk
+          rm -rf mdk/src
+          cp -r src mdk/src
+          cd mdk
+          chmod +x gradlew
+          sed -i 's#http://files.minecraftforge.net/maven#https://maven.minecraftforge.net#g' build.gradle
+          sed -i 's#^archivesBaseName = .*#archivesBaseName = "weaponmod"#' build.gradle
+          sed -i "s#^version = .*#version = \"$MODVER\"#" build.gradle
+          sed -i -E "s/version\s*=\s*\"[0-9]+(\.[0-9]+)*\"/version = \"$MODVER\"/" src/main/java/weaponmod/WeaponMod.java
+
+      - name: Build
+        working-directory: mdk
+        run: ./gradlew build --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: weaponmod-${{ env.MODVER }}
+          path: mdk/build/libs/*.jar
+
+      - name: Publish GitHub Release (only for tags vX.Y)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" mdk/build/libs/weaponmod-*.jar \
+            --title "Weapon Mod $MODVER" --generate-notes
