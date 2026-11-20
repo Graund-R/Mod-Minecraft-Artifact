@@ -47,10 +47,12 @@ jobs:
           key: forge-1.12.2-14.23.5.2860-${{ runner.os }}
           restore-keys: forge-1.12.2-
 
-      - name: Prepare project (Forge MDK + ./src)
+      - name: Prepare project (extract mod sources + Forge MDK)
         run: |
           set -e
-          test -d src/main/java/weaponmod
+          mkdir -p source
+          unzip -q weaponmod-1.0.zip -d source
+          test -d source/src/main/java/weaponmod
           if [ ! -f mdk.zip ]; then
             curl -fL -o mdk.zip https://maven.minecraftforge.net/net/minecraftforge/forge/1.12.2-14.23.5.2860/forge-1.12.2-14.23.5.2860-mdk.zip
           fi
@@ -58,7 +60,7 @@ jobs:
           mkdir mdk
           unzip -q mdk.zip -d mdk
           rm -rf mdk/src
-          cp -r src mdk/src
+          cp -r source/src mdk/src
           cd mdk
           chmod +x gradlew
           sed -i 's#http://files.minecraftforge.net/maven#https://maven.minecraftforge.net#g' build.gradle
